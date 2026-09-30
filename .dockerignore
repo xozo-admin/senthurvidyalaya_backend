@@ -1,0 +1,12 @@
+.git
+.gitignore
+.env
+.env.*
+venv
+.venv
+__pycache__
+*.py[cod]
+*.sqlite3
+firebase_credentials.json
+full_data.json
+.DS_Store
