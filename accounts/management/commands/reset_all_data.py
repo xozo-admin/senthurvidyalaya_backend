@@ -28,10 +28,22 @@ class Command(BaseCommand):
         if not password:
             raise CommandError("RESET_ADMIN_PASSWORD is required.")
 
+        user_model = get_user_model()
+        if user_model.objects.filter(
+            username=username,
+            is_superuser=True,
+            user_type="super_admin",
+        ).exists():
+            self.stdout.write(
+                self.style.WARNING(
+                    f"Reset already completed for super administrator '{username}'; skipping."
+                )
+            )
+            return
+
         self.stdout.write("Deleting all database data...")
         call_command("flush", interactive=False, verbosity=options["verbosity"])
 
-        user_model = get_user_model()
         user_model.objects.create_superuser(
             username=username,
             password=password,
