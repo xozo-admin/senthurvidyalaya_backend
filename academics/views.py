@@ -230,7 +230,7 @@ class StructureEditView(APIView):
     permission_classes = [IsAuthenticated, IsOwnerAdminOrAdminStaff]
 
     def put(self, request):
-        edit_type = request.data.get('type') # 'section' or 'subject'
+        edit_type = request.data.get('type') # 'class', 'section', or 'subject'
         class_name = request.data.get('class_name')
         old_name = request.data.get('old_name')
         new_name = request.data.get('new_name')
@@ -244,8 +244,20 @@ class StructureEditView(APIView):
         except Standard.DoesNotExist:
             return Response({"error": "Class not found"}, 404)
 
-        # --- A. RENAME SECTION ---
-        if edit_type == 'section':
+        # --- A. RENAME CLASS ---
+        if edit_type == 'class':
+            try:
+                previous_description = standard.description
+                standard.name = new_name
+                if previous_description == f"Class {old_name}":
+                    standard.description = f"Class {new_name}"
+                standard.save(update_fields=['name', 'description'])
+                return Response({"message": f"Class renamed from {old_name} to {new_name}"})
+            except Exception as e:
+                return Response({"error": f"Update failed (Duplicate name?): {str(e)}"}, 400)
+
+        # --- B. RENAME SECTION ---
+        elif edit_type == 'section':
             try:
                 section = Section.objects.get(standard=standard, name=old_name)
                 section.name = new_name
@@ -256,7 +268,7 @@ class StructureEditView(APIView):
             except Exception as e:
                 return Response({"error": f"Update failed (Duplicate name?): {str(e)}"}, 400)
 
-        # --- B. RENAME SUBJECT ---
+        # --- C. RENAME SUBJECT ---
         elif edit_type == 'subject':
             try:
                 subject = Subject.objects.get(standard=standard, name=old_name)
@@ -269,7 +281,7 @@ class StructureEditView(APIView):
                 return Response({"error": f"Update failed: {str(e)}"}, 400)
 
         else:
-            return Response({"error": "Invalid type. Use 'section' or 'subject'."}, 400)
+            return Response({"error": "Invalid type. Use 'class', 'section', or 'subject'."}, 400)
         
 class StandardListCreateViewNew(generics.ListCreateAPIView):
     serializer_class = StandardSerializer      # <--- Use the Simple one here
