@@ -66,11 +66,14 @@ def sync_user_profile(sender, instance, created, **kwargs):
             needs_save = True
             print(f"--- SYNC: Updated email for {username_val} to {email_val} ---")
 
-        if user_account.phone != str(password_val):
+        password_changed = user_account.phone != str(password_val)
+        if password_changed:
             user_account.phone = str(password_val)
             needs_save = True
 
-        if isinstance(instance, Teacher):
+        if isinstance(instance, Teacher) or (
+            isinstance(instance, Student) and password_changed
+        ):
             user_account.set_password(str(password_val))
             needs_save = True
 

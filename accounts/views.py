@@ -117,6 +117,14 @@ class LoginView(APIView):
             if matched_user:
                 user = authenticate(username=matched_user.username, password=password)
 
+        # Student accounts use the student ID as their Django username, while
+        # the login screen asks students to enter their email address. Resolve
+        # that email to the account username before authenticating.
+        if user is None and '@' in username:
+            matched_user = User.objects.filter(email__iexact=username).first()
+            if matched_user:
+                user = authenticate(username=matched_user.username, password=password)
+
         if user is not None:
             # --- CASE A: ADMIN / SUPER ADMIN (Requires 2FA) ---
             if user.user_type in ('admin', 'super_admin'):
