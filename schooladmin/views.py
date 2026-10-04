@@ -471,7 +471,10 @@ class AdminStudentPaginatedListView(generics.ListAPIView):
             return queryset.none()
 
         if target_year:
-            queryset = queryset.filter(enrollments__academic_year=target_year).prefetch_related(
+            # Keep the full student roster for "All Students". Enrollment is
+            # optional, so filtering the base queryset by year here silently
+            # removed profiles that have not been assigned to a class yet.
+            queryset = queryset.prefetch_related(
                 Prefetch(
                     "enrollments",
                     queryset=Enrollment.objects.filter(academic_year=target_year).select_related("standard", "section"),
