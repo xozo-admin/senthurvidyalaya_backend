@@ -4,6 +4,7 @@ import os
 import zipfile
 from datetime import datetime
 from django.core.files.base import ContentFile
+from django.db import transaction
 from django.contrib.auth.hashers import make_password
 from announcements.models import Announcement, CommonAnnouncement, StaffAnnouncement, TeacherAnnouncement
 from inventory.models import InventoryItem, StockLog
@@ -658,6 +659,15 @@ class AdminTeacherDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_queryset(self):
         return scope_queryset_for_user(Teacher.objects.all(), self.request)
+
+    def perform_destroy(self, instance):
+        # A Teacher owns its link to User, so deleting the profile alone leaves
+        # the login row (and its globally unique username) behind.
+        linked_user = instance.user
+        with transaction.atomic():
+            instance.delete()
+            if linked_user is not None:
+                linked_user.delete()
 
 class AdminStaffListCreateView(generics.ListCreateAPIView):
     serializer_class = StaffProfileSerializer

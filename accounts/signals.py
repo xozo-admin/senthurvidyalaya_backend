@@ -82,7 +82,7 @@ def sync_user_profile(sender, instance, created, **kwargs):
         
         return # Stop here, we are done updating.
 
-    # --- 3. CREATION LOGIC (If User Does Not Exist) ---
+    # --- 3. CREATION / RE-LINK LOGIC ---
     # Split Name
     if full_name:
         parts = full_name.strip().split(' ', 1)
@@ -104,9 +104,37 @@ def sync_user_profile(sender, instance, created, **kwargs):
             }
         )
 
+        # Deleting a profile does not delete its User (the OneToOne cascade
+        # runs when the User is deleted). Reusing an orphaned teacher username
+        # must therefore reset its credentials and profile data. Never take
+        # over an account that is still linked to another profile or role.
+        if not user_created:
+            if user.user_type != user_type_val:
+                raise ValueError(
+                    f"Username {username_val} is already assigned to a different user type."
+                )
+            related_profile = {
+                'teacher': 'teacher_profile',
+                'student': 'student_profile',
+                'staff': 'staff_profile',
+            }.get(user_type_val)
+            if related_profile and hasattr(user, related_profile):
+                raise ValueError(
+                    f"Username {username_val} is already linked to another profile."
+                )
+
+        # Always sync credentials when linking a newly created profile to an
+        # existing orphan account; this also ensures the new teacher's phone
+        # number is the initial password.
+        user.email = email_val or ''
+        user.phone = str(password_val or '')
+        user.first_name = first_name
+        user.last_name = last_name
+        user.is_active = True
+        user.set_password(str(password_val or ''))
+        user.save()
+
         if user_created:
-            user.set_password(str(password_val))
-            user.save()
             print(f"--- NEW ACCOUNT: Created {username_val} | Name: {first_name} ---")
 
         # Link the Profile to the User
