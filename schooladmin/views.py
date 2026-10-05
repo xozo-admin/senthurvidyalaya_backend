@@ -361,19 +361,36 @@ class CSVUploadView(APIView):
                 # --- 2. TEACHERS ---
                 if csv_value(row, "teacher_id"):
                     tid = csv_value(row, "teacher_id")
-                    _, created = Teacher.objects.update_or_create(
+                    teacher_name = csv_value(row, "teacher_name", "name")
+                    teacher_phone = csv_value(row, "teacher_phone", "phone")
+                    teacher_email = csv_value(row, "teacher_email", "email")
+                    teacher_dob = csv_value(row, "teacher_dob", "date_of_birth", "dob")
+                    if not teacher_name or not teacher_phone or not teacher_email or not teacher_dob:
+                        missing = [
+                            label for label, value in (
+                                ("name", teacher_name),
+                                ("phone", teacher_phone),
+                                ("email", teacher_email),
+                                ("date of birth", teacher_dob),
+                            ) if not value
+                        ]
+                        raise ValueError(f"Missing required teacher fields: {', '.join(missing)}")
+
+                    Teacher.objects.update_or_create(
                         school=school,
                         teacher_id=tid,
                         defaults={
-                            "name": csv_value(row, "teacher_name"),
-                            "phone": csv_value(row, "teacher_phone"),
-                            "email": csv_value(row, "teacher_email"),
-                            "date_of_birth": parse_date(csv_value(row, "teacher_dob")),
+                            "name": teacher_name,
+                            "phone": teacher_phone,
+                            "email": teacher_email,
+                            "date_of_birth": parse_date(teacher_dob),
+                            "joining_date": parse_date(csv_value(row, "joining_date")) if csv_value(row, "joining_date") else None,
                             "qualification": csv_value(row, "qualification"),
                             "department": csv_value(row, "department"),
+                            "address": csv_value(row, "address") or "Not Provided",
                         }
                     )
-                    if created: teacher_count += 1
+                    teacher_count += 1
 
                 # --- 3. STAFF ---
                 if csv_value(row, "staff_id"):
