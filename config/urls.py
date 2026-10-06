@@ -1,7 +1,9 @@
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, include, re_path
 from django.conf import settings             # <--- Import settings
 from django.conf.urls.static import static   # <--- Import static
+from django.views.static import serve
+import re
 
 urlpatterns = [
     # 1. Django Admin Panel (Standard Web Interface)
@@ -79,7 +81,17 @@ urlpatterns = [
     path('api/promotions/', include('promotions.urls')),
 ]
 
-# 8. Media Files Configuration (Essential for viewing PDFs/Images)
-# This tells Django: "When a URL starts with /media/, go look in the media folder."
+# Keep development media behavior. In production, expose only the school and
+# institution logos needed by public-facing dashboard headers; other uploaded
+# files can include private documents and must not be served anonymously.
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+else:
+    media_prefix = re.escape(settings.MEDIA_URL.lstrip('/'))
+    urlpatterns += [
+        re_path(
+            rf'^{media_prefix}(?P<path>(?:schools|institutions)/logos/.*)$',
+            serve,
+            {'document_root': settings.MEDIA_ROOT},
+        ),
+    ]
