@@ -25,7 +25,8 @@ from staff.permissions import (
 from staff_work.models import WorkAssignment
 from .permissions import IsAdmin, IsSuperAdmin
 from .serializers import AdminProfileSerializer, AdminUserSerializer
-from accounts.serializers import AdminCreateSerializer
+from accounts.serializers import AdminCreateSerializer, AdminUpdateSerializer
+from django.shortcuts import get_object_or_404
 
 # Models
 from students.models import Student, Enrollment
@@ -217,6 +218,33 @@ class SuperAdminAdminUserListCreateView(APIView):
             },
             status=status.HTTP_201_CREATED,
         )
+
+
+class SuperAdminAdminUserDetailView(APIView):
+    permission_classes = [IsAuthenticated, IsSuperAdmin]
+
+    def get_object(self, pk):
+        return get_object_or_404(User, pk=pk, user_type='admin')
+
+    def patch(self, request, pk):
+        admin = self.get_object(pk)
+        serializer = AdminUpdateSerializer(
+            admin,
+            data=request.data,
+            partial=True,
+            context={'user': admin},
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response({"status": 200, "data": AdminUserSerializer(admin).data})
+
+    def put(self, request, pk):
+        return self.patch(request, pk)
+
+    def delete(self, request, pk):
+        admin = self.get_object(pk)
+        admin.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 # ==========================================

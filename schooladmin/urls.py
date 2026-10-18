@@ -47,6 +47,7 @@ from .views import (
     AdminStaffTodayWorkStatusView,
     AdminSidebarCountsView,
     SuperAdminAdminUserListCreateView,
+    SuperAdminAdminUserDetailView,
 
     
 )
@@ -58,6 +59,7 @@ urlpatterns = [
     # --- ADMIN'S OWN PROFILE ---
     path("profile/", AdminProfileView.as_view(), name="admin-profile"),
     path("admin-users/", SuperAdminAdminUserListCreateView.as_view(), name="super-admin-admin-users"),
+    path("admin-users/<int:pk>/", SuperAdminAdminUserDetailView.as_view(), name="super-admin-admin-user-detail"),
 
     path('dashboard/', AdminDashboardView.as_view(), name='admin-dashboard'), # <--- NEW
 

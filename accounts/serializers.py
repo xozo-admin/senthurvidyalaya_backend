@@ -79,6 +79,56 @@ class AdminCreateSerializer(serializers.Serializer):
         return user
 
 
+class AdminUpdateSerializer(serializers.Serializer):
+    admin_name = serializers.CharField(required=False, allow_blank=False)
+    admin_phone = serializers.CharField(required=False, allow_blank=True)
+    admin_email = serializers.EmailField(required=False)
+    admin_password = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    school_id = serializers.IntegerField(required=False, allow_null=True)
+    is_active = serializers.BooleanField(required=False)
+
+    def validate_admin_email(self, value):
+        user = self.context['user']
+        if User.objects.filter(username__iexact=value).exclude(pk=user.pk).exists() or User.objects.filter(email__iexact=value).exclude(pk=user.pk).exists():
+            raise serializers.ValidationError("A user with this email already exists.")
+        return value
+
+    def validate_school_id(self, value):
+        if value is not None and not School.objects.filter(pk=value, is_active=True).exists():
+            raise serializers.ValidationError("Please choose an active school.")
+        return value
+
+    def update(self, instance, validated_data):
+        name = validated_data.pop('admin_name', None)
+        phone = validated_data.pop('admin_phone', None)
+        email = validated_data.pop('admin_email', None)
+        password = validated_data.pop('admin_password', None)
+        school_id = validated_data.pop('school_id', ...)
+
+        if name is not None:
+            instance.first_name = name
+        if phone is not None:
+            instance.phone = phone
+        if email is not None:
+            instance.email = email
+            instance.username = email
+        if password:
+            instance.set_password(password)
+        for field, value in validated_data.items():
+            setattr(instance, field, value)
+        instance.save()
+
+        if school_id is not ...:
+            if school_id is None:
+                AdminProfile.objects.filter(user=instance).delete()
+            else:
+                AdminProfile.objects.update_or_create(
+                    user=instance,
+                    defaults={'school_id': school_id},
+                )
+        return instance
+
+
 # STEP 2 — SCHOOL REGISTRATION
 class SchoolRegisterSerializer(serializers.Serializer):
     institution = serializers.IntegerField(required=False, allow_null=True)
