@@ -4,6 +4,7 @@ from rest_framework import status
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 from django.db.models import Count, Q
+from django.db import transaction
 
 # CHANGE 1: Import your specific permission class here.
 # If it's in a specific file like 'accounts.permissions', adjust the import below:
@@ -58,6 +59,40 @@ class SchoolDetailView(generics.RetrieveUpdateDestroyAPIView):
             admin_count=Count('adminprofile', distinct=True),
         )
         return scope_queryset_for_user(queryset, self.request, field='id')
+
+    def perform_destroy(self, instance):
+        # Some historical records intentionally use PROTECT so they cannot be
+        # removed while a school is active. A permanent school deletion is the
+        # explicit operation that removes that school's complete data tree.
+        from hostel.models import HostelAllocation
+        from promotions.models import PromotionBatch, PromotionRecord
+
+        with transaction.atomic():
+            student_ids = instance.students.values_list('id', flat=True)
+            year_ids = instance.academic_years.values_list('id', flat=True)
+            standard_ids = instance.standards.values_list('id', flat=True)
+            section_ids = instance.sections.values_list('id', flat=True)
+
+            # Remove protected historical references before their target rows.
+            PromotionRecord.objects.filter(
+                Q(student_id__in=student_ids)
+                | Q(from_enrollment__school=instance)
+                | Q(to_enrollment__school=instance)
+                | Q(from_standard_id__in=standard_ids)
+                | Q(from_section_id__in=section_ids)
+                | Q(target_standard_id__in=standard_ids)
+                | Q(target_section_id__in=section_ids)
+            ).delete()
+            PromotionBatch.objects.filter(
+                Q(from_academic_year_id__in=year_ids)
+                | Q(to_academic_year_id__in=year_ids)
+            ).delete()
+            HostelAllocation.objects.filter(
+                Q(student_id__in=student_ids)
+                | Q(academic_year_id__in=year_ids)
+            ).delete()
+
+            instance.delete()
 
 class AcademicYearListCreateView(APIView):
     # CHANGE 2: Use your specific class 'IsAdmin'
