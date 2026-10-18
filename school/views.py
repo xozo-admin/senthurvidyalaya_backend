@@ -17,6 +17,40 @@ from .serializers import AcademicYearSerializer, InstitutionSerializer, SchoolSe
 from .tenant import get_requested_school, scope_queryset_for_user
 
 
+def _delete_school_data(school):
+    """Remove protected historical references before cascading a school."""
+    from hostel.models import HostelAllocation
+    from promotions.models import PromotionBatch, PromotionRecord
+
+    student_ids = list(school.students.values_list('id', flat=True))
+    year_ids = list(school.academic_years.values_list('id', flat=True))
+    standard_ids = list(school.standards.values_list('id', flat=True))
+    section_ids = list(school.sections.values_list('id', flat=True))
+
+    # Remove protected historical references before their target rows.
+    PromotionRecord.objects.filter(
+        Q(student_id__in=student_ids)
+        | Q(from_enrollment__school=school)
+        | Q(to_enrollment__school=school)
+        | Q(from_standard_id__in=standard_ids)
+        | Q(from_section_id__in=section_ids)
+        | Q(target_standard_id__in=standard_ids)
+        | Q(target_section_id__in=section_ids)
+    ).delete()
+    PromotionBatch.objects.filter(
+        Q(from_academic_year_id__in=year_ids)
+        | Q(to_academic_year_id__in=year_ids)
+    ).delete()
+    HostelAllocation.objects.filter(
+        Q(student_id__in=student_ids)
+        | Q(academic_year_id__in=year_ids)
+    ).delete()
+
+    # Students protect their standards and sections, so remove them before
+    # deleting those school structures. Their linked accounts cascade with them.
+    school.students.all().delete()
+
+
 class InstitutionListCreateView(generics.ListCreateAPIView):
     serializer_class = InstitutionSerializer
     permission_classes = [IsAuthenticated, IsSuperAdmin]
@@ -31,6 +65,12 @@ class InstitutionDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_queryset(self):
         return Institution.objects.annotate(school_count=Count('schools'))
+
+    def perform_destroy(self, instance):
+        with transaction.atomic():
+            for school in instance.schools.all():
+                _delete_school_data(school)
+            instance.delete()
 
 
 class SchoolListCreateView(generics.ListCreateAPIView):
@@ -61,37 +101,8 @@ class SchoolDetailView(generics.RetrieveUpdateDestroyAPIView):
         return scope_queryset_for_user(queryset, self.request, field='id')
 
     def perform_destroy(self, instance):
-        # Some historical records intentionally use PROTECT so they cannot be
-        # removed while a school is active. A permanent school deletion is the
-        # explicit operation that removes that school's complete data tree.
-        from hostel.models import HostelAllocation
-        from promotions.models import PromotionBatch, PromotionRecord
-
         with transaction.atomic():
-            student_ids = instance.students.values_list('id', flat=True)
-            year_ids = instance.academic_years.values_list('id', flat=True)
-            standard_ids = instance.standards.values_list('id', flat=True)
-            section_ids = instance.sections.values_list('id', flat=True)
-
-            # Remove protected historical references before their target rows.
-            PromotionRecord.objects.filter(
-                Q(student_id__in=student_ids)
-                | Q(from_enrollment__school=instance)
-                | Q(to_enrollment__school=instance)
-                | Q(from_standard_id__in=standard_ids)
-                | Q(from_section_id__in=section_ids)
-                | Q(target_standard_id__in=standard_ids)
-                | Q(target_section_id__in=section_ids)
-            ).delete()
-            PromotionBatch.objects.filter(
-                Q(from_academic_year_id__in=year_ids)
-                | Q(to_academic_year_id__in=year_ids)
-            ).delete()
-            HostelAllocation.objects.filter(
-                Q(student_id__in=student_ids)
-                | Q(academic_year_id__in=year_ids)
-            ).delete()
-
+            _delete_school_data(instance)
             instance.delete()
 
 class AcademicYearListCreateView(APIView):
