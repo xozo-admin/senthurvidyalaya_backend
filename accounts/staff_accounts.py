@@ -3,10 +3,15 @@ from django.contrib.auth import get_user_model
 User = get_user_model()
 
 
+def normalize_staff_phone(phone):
+    """Return the phone-based initial password without formatting whitespace."""
+    return "".join(str(phone or "").split())
+
+
 def provision_staff_login(staff_member):
     """Ensure a staff profile has a usable login; return its User."""
     username = str(staff_member.staff_id or "").strip()
-    phone = str(staff_member.phone or "")
+    phone = normalize_staff_phone(staff_member.phone)
     if not username:
         raise ValueError("Staff ID is required to create a login.")
     if not phone.strip():
