@@ -2,6 +2,8 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import ValidationError
+from django.db import transaction
 from django.shortcuts import get_object_or_404
 
 # --- CRITICAL FIX: Import 'IsAdmin' here ---
@@ -19,6 +21,7 @@ from .models import (
 )
 from school.tenant import get_requested_school, scope_queryset_for_user
 from school.models import School
+from accounts.staff_accounts import provision_staff_login
 
 # --- 1. Admin Creates Staff ---
 class CreateStaffView(APIView):
@@ -31,7 +34,12 @@ class CreateStaffView(APIView):
     def post(self, request):
         serializer = StaffRegistrationSerializer(data=request.data)
         if serializer.is_valid():
-            serializer.save()
+            try:
+                with transaction.atomic():
+                    staff_member = serializer.save(school=get_requested_school(request))
+                    provision_staff_login(staff_member)
+            except ValueError as exc:
+                raise ValidationError({"staff_id": str(exc)}) from exc
             return Response({
                 "message": "Staff Member Created Successfully",
                 "data": serializer.data

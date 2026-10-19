@@ -17,6 +17,7 @@ from rest_framework.permissions import IsAuthenticated
 
 # --- IMPORTS FROM YOUR APPS ---
 from accounts.models import User
+from accounts.staff_accounts import provision_staff_login
 from staff.permissions import (
     IsOwnerAdminOrAdminStaff,
     IsOwnerAdminOrAdminStaffOrHostelWarden,
@@ -612,7 +613,12 @@ class AdminTeacherListCreateView(generics.ListCreateAPIView):
         return scope_queryset_for_user(Teacher.objects.all(), self.request).order_by("teacher_id")
 
     def perform_create(self, serializer):
-        serializer.save(school=get_requested_school(self.request))
+        with transaction.atomic():
+            staff_member = serializer.save(school=get_requested_school(self.request))
+            try:
+                provision_staff_login(staff_member)
+            except ValueError as exc:
+                raise ValidationError({"staff_id": str(exc)}) from exc
 
     def get_permissions(self):
         # Allow admin_staff to read teacher list (used by staff academics/classes page).
