@@ -47,6 +47,11 @@ class StaffProfileSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError("Staff ID already exists in this school.")
         return value
 
+    def validate_phone(self, value):
+        # Phone numbers are stored as identifiers/password seeds; remove any
+        # formatting whitespace consistently across create and edit APIs.
+        return "".join(str(value or "").split())
+
         # --- ATTENDANCE HELPER METHOD ---
     def _calculate_percentage(self, staff, start_date, end_date):
         records = StaffAttendance.objects.filter(staff=staff, date__range=[start_date, end_date])
@@ -157,6 +162,9 @@ class StaffRegistrationSerializer(serializers.ModelSerializer):
             'upi_id',
         ]
         read_only_fields = ['school']
+
+    def validate_phone(self, value):
+        return "".join(str(value or "").split())
 
 
 class StaffRolePermissionSerializer(serializers.ModelSerializer):

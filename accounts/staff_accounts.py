@@ -17,6 +17,10 @@ def provision_staff_login(staff_member):
     if not phone.strip():
         raise ValueError("A phone number is required to create the initial password.")
 
+    if str(staff_member.phone or "") != phone:
+        type(staff_member).objects.filter(pk=staff_member.pk).update(phone=phone)
+        staff_member.phone = phone
+
     user = staff_member.user
     if user is None:
         user = User.objects.filter(username__iexact=username).first()
