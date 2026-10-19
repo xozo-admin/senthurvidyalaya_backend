@@ -280,6 +280,10 @@ class CSVUploadView(APIView):
             return Response({"error": "CSV file is empty or missing a header row."}, status=400)
 
         normalized_headers = {normalize_csv_key(header) for header in csv_reader.fieldnames}
+        if not normalized_headers.intersection({"student_id", "teacher_id", "staff_id"}):
+            return Response({
+                "error": "CSV must include student_id, teacher_id, or staff_id as an identifier column."
+            }, status=400)
         supported_student_headers = {
             "student_id", "student_name", "student_email", "father_name", "mother_name",
             "father_phone", "mother_phone", "date_of_birth", "gender", "class",
@@ -292,162 +296,198 @@ class CSVUploadView(APIView):
                 "sample_format": "student_id,student_name,student_email,father_name,mother_name,father_phone,mother_phone,date_of_birth,gender,class,section,address,accommodation"
             }, status=400)
 
+        validate_only = request.query_params.get("validate_only", "").lower() in {"1", "true", "yes"}
         student_count = enrollment_count = teacher_count = staff_count = 0
+        staff_updated_count = 0
         updated_student_count = 0
         errors = []
+        seen_staff_ids = {}
 
-        for row_number, row in enumerate(csv_reader, start=2):
-            try:
-                row = normalize_csv_row(row)
-                # --- 1. STUDENTS ---
-                if csv_value(row, "student_id"):
-                    sid = csv_value(row, "student_id")
-                    existing_student = Student.objects.filter(school=school, student_id=sid).first()
+        with transaction.atomic():
+            for row_number, row in enumerate(csv_reader, start=2):
+                try:
+                    row = normalize_csv_row(row)
+                    if (
+                        not csv_value(row, "staff_id")
+                        and any(csv_value(row, key) for key in ("staff_name", "staff_phone", "staff_role"))
+                    ):
+                        raise ValueError("Missing required staff_id.")
+                    # --- 1. STUDENTS ---
+                    if csv_value(row, "student_id"):
+                        sid = csv_value(row, "student_id")
+                        existing_student = Student.objects.filter(school=school, student_id=sid).first()
 
-                    required_fields = {
-                        "student_name": csv_value(row, "student_name", "name"),
-                        "father_name": csv_value(row, "father_name"),
-                        "mother_name": csv_value(row, "mother_name"),
-                        "father_phone": csv_value(row, "father_phone"),
-                        "mother_phone": csv_value(row, "mother_phone"),
-                        "date_of_birth": csv_value(row, "date_of_birth", "dob"),
-                        "gender": csv_value(row, "gender"),
-                    }
-                    missing = [field for field, value in required_fields.items() if not value]
-                    if missing:
-                        raise ValueError(f"Missing required fields: {', '.join(missing)}")
-
-                    gender = required_fields["gender"].title()
-                    if gender.lower() not in {"male", "female", "other"}:
-                        raise ValueError("Gender must be Male, Female, or Other.")
-                    
-                    # A. Create Student Profile (Static)
-                    student_obj, created = Student.objects.update_or_create(
-                        school=school,
-                        student_id=sid,
-                        defaults={
-                            "student_name": required_fields["student_name"],
-                            "student_email": csv_value(row, "student_email", "email") or None,
-                            "father_name": required_fields["father_name"],
-                            "mother_name": required_fields["mother_name"],
-                            "father_phone": required_fields["father_phone"],
-                            "mother_phone": required_fields["mother_phone"],
-                            "date_of_birth": parse_date(required_fields["date_of_birth"]),
-                            "gender": gender,
-                            "date_of_admission": parse_date(csv_value(row, "date_of_admission")) if csv_value(row, "date_of_admission") else timezone.now().date(),
-                            "address": csv_value(row, "address") or "Not Provided",
-                            "accommodation": normalize_accommodation(csv_accommodation_value(row)),
+                        required_fields = {
+                            "student_name": csv_value(row, "student_name", "name"),
+                            "father_name": csv_value(row, "father_name"),
+                            "mother_name": csv_value(row, "mother_name"),
+                            "father_phone": csv_value(row, "father_phone"),
+                            "mother_phone": csv_value(row, "mother_phone"),
+                            "date_of_birth": csv_value(row, "date_of_birth", "dob"),
+                            "gender": csv_value(row, "gender"),
                         }
-                    )
-                    if created:
-                        student_count += 1
-                    else:
-                        updated_student_count += 1
+                        missing = [field for field, value in required_fields.items() if not value]
+                        if missing:
+                            raise ValueError(f"Missing required fields: {', '.join(missing)}")
 
-                    # B. Logic: Enroll ONLY if 'class' is present (Matches Manual API)
-                    class_val = csv_value(row, "class", "class_name", "standard")
-                    if class_val:
-                        # Resolve Standard
-                        standard_obj, _ = Standard.objects.get_or_create(
+                        gender = required_fields["gender"].title()
+                        if gender.lower() not in {"male", "female", "other"}:
+                            raise ValueError("Gender must be Male, Female, or Other.")
+
+                        # A. Create Student Profile (Static)
+                        student_obj, created = Student.objects.update_or_create(
                             school=school,
-                            name=str(class_val).strip(),
-                        )
-                        
-                        # Resolve Section (Keep NULL if empty)
-                        section_val = csv_value(row, "section")
-                        section_obj = None
-                        if section_val:
-                            section_obj, _ = Section.objects.get_or_create(
-                                standard=standard_obj, 
-                                name=str(section_val).strip(),
-                                defaults={"school": school}
-                            )
-                            if section_obj.school_id and section_obj.school_id != school.id:
-                                raise ValueError(
-                                    f"Section '{section_obj.name}' for Class '{standard_obj.name}' belongs to another school."
-                                )
-                            if not section_obj.school_id:
-                                section_obj.school = school
-                                section_obj.save(update_fields=["school"])
-
-                        # SYNC: Update the Profile cached fields (Matches Serializer logic)
-                        student_obj.standard = standard_obj
-                        student_obj.section = section_obj
-                        student_obj.save(update_fields=["standard", "section"])
-
-                        # Create/Update Enrollment for Active Year
-                        Enrollment.objects.update_or_create(
-                            student=student_obj,
-                            academic_year=active_year,
+                            student_id=sid,
                             defaults={
-                                'school': school,
-                                'standard': standard_obj,
-                                'section': section_obj, # Stores NULL if empty
-                                'is_active': True
-                            }
-                        )
-                        enrollment_count += 1
-
-                # --- 2. TEACHERS ---
-                if csv_value(row, "teacher_id"):
-                    tid = csv_value(row, "teacher_id")
-                    teacher_name = csv_value(row, "teacher_name", "name")
-                    teacher_phone = csv_value(row, "teacher_phone", "phone")
-                    teacher_email = csv_value(row, "teacher_email", "email")
-                    teacher_dob = csv_value(row, "teacher_dob", "date_of_birth", "dob")
-                    if not teacher_name or not teacher_phone or not teacher_email or not teacher_dob:
-                        missing = [
-                            label for label, value in (
-                                ("name", teacher_name),
-                                ("phone", teacher_phone),
-                                ("email", teacher_email),
-                                ("date of birth", teacher_dob),
-                            ) if not value
-                        ]
-                        raise ValueError(f"Missing required teacher fields: {', '.join(missing)}")
-
-                    Teacher.objects.update_or_create(
-                        school=school,
-                        teacher_id=tid,
-                        defaults={
-                            "name": teacher_name,
-                            "phone": teacher_phone,
-                            "email": teacher_email,
-                            "date_of_birth": parse_date(teacher_dob),
-                            "joining_date": parse_date(csv_value(row, "joining_date")) if csv_value(row, "joining_date") else None,
-                            "qualification": csv_value(row, "qualification"),
-                            "department": csv_value(row, "department"),
-                            "address": csv_value(row, "address") or "Not Provided",
-                        }
-                    )
-                    teacher_count += 1
-
-                # --- 3. STAFF ---
-                if csv_value(row, "staff_id"):
-                    stid = csv_value(row, "staff_id")
-                    with transaction.atomic():
-                        staff_member, created = NonTeachingStaff.objects.update_or_create(
-                            school=school,
-                            staff_id=stid,
-                            defaults={
-                                "name": csv_value(row, "staff_name"),
-                                "phone": csv_value(row, "staff_phone"),
-                                "role": csv_value(row, "staff_role"),
+                                "student_name": required_fields["student_name"],
+                                "student_email": csv_value(row, "student_email", "email") or None,
+                                "father_name": required_fields["father_name"],
+                                "mother_name": required_fields["mother_name"],
+                                "father_phone": required_fields["father_phone"],
+                                "mother_phone": required_fields["mother_phone"],
+                                "date_of_birth": parse_date(required_fields["date_of_birth"]),
+                                "gender": gender,
+                                "date_of_admission": parse_date(csv_value(row, "date_of_admission")) if csv_value(row, "date_of_admission") else timezone.now().date(),
+                                "address": csv_value(row, "address") or "Not Provided",
+                                "accommodation": normalize_accommodation(csv_accommodation_value(row)),
                             }
                         )
                         if created:
-                            provision_staff_login(staff_member)
-                    if created: staff_count += 1
+                            student_count += 1
+                        else:
+                            updated_student_count += 1
 
-            except Exception as e:
-                errors.append(f"Row {row_number}: {str(e)}")
+                        # B. Logic: Enroll ONLY if 'class' is present (Matches Manual API)
+                        class_val = csv_value(row, "class", "class_name", "standard")
+                        if class_val:
+                            # Resolve Standard
+                            standard_obj, _ = Standard.objects.get_or_create(
+                                school=school,
+                                name=str(class_val).strip(),
+                            )
 
-        processed_count = student_count + updated_student_count + enrollment_count + teacher_count + staff_count
-        response_status = 400 if errors and processed_count == 0 else 200
+                            # Resolve Section (Keep NULL if empty)
+                            section_val = csv_value(row, "section")
+                            section_obj = None
+                            if section_val:
+                                section_obj, _ = Section.objects.get_or_create(
+                                    standard=standard_obj,
+                                    name=str(section_val).strip(),
+                                    defaults={"school": school}
+                                )
+                                if section_obj.school_id and section_obj.school_id != school.id:
+                                    raise ValueError(
+                                        f"Section '{section_obj.name}' for Class '{standard_obj.name}' belongs to another school."
+                                    )
+                                if not section_obj.school_id:
+                                    section_obj.school = school
+                                    section_obj.save(update_fields=["school"])
+
+                            # SYNC: Update the Profile cached fields (Matches Serializer logic)
+                            student_obj.standard = standard_obj
+                            student_obj.section = section_obj
+                            student_obj.save(update_fields=["standard", "section"])
+
+                            # Create/Update Enrollment for Active Year
+                            Enrollment.objects.update_or_create(
+                                student=student_obj,
+                                academic_year=active_year,
+                                defaults={
+                                    'school': school,
+                                    'standard': standard_obj,
+                                    'section': section_obj, # Stores NULL if empty
+                                    'is_active': True
+                                }
+                            )
+                            enrollment_count += 1
+
+                    # --- 2. TEACHERS ---
+                    if csv_value(row, "teacher_id"):
+                        tid = csv_value(row, "teacher_id")
+                        teacher_name = csv_value(row, "teacher_name", "name")
+                        teacher_phone = csv_value(row, "teacher_phone", "phone")
+                        teacher_email = csv_value(row, "teacher_email", "email")
+                        teacher_dob = csv_value(row, "teacher_dob", "date_of_birth", "dob")
+                        if not teacher_name or not teacher_phone or not teacher_email or not teacher_dob:
+                            missing = [
+                                label for label, value in (
+                                    ("name", teacher_name),
+                                    ("phone", teacher_phone),
+                                    ("email", teacher_email),
+                                    ("date of birth", teacher_dob),
+                                ) if not value
+                            ]
+                            raise ValueError(f"Missing required teacher fields: {', '.join(missing)}")
+
+                        Teacher.objects.update_or_create(
+                            school=school,
+                            teacher_id=tid,
+                            defaults={
+                                "name": teacher_name,
+                                "phone": teacher_phone,
+                                "email": teacher_email,
+                                "date_of_birth": parse_date(teacher_dob),
+                                "joining_date": parse_date(csv_value(row, "joining_date")) if csv_value(row, "joining_date") else None,
+                                "qualification": csv_value(row, "qualification"),
+                                "department": csv_value(row, "department"),
+                                "address": csv_value(row, "address") or "Not Provided",
+                            }
+                        )
+                        teacher_count += 1
+
+                    # --- 3. STAFF ---
+                    if csv_value(row, "staff_id"):
+                        stid = csv_value(row, "staff_id")
+                        staff_name = csv_value(row, "staff_name")
+                        staff_phone = "".join(csv_value(row, "staff_phone").split())
+                        staff_role = csv_value(row, "staff_role").strip().lower().replace(" ", "_").replace("-", "_")
+                        missing_staff_fields = [
+                            label for label, value in (
+                                ("staff_name", staff_name),
+                                ("staff_phone", staff_phone),
+                                ("staff_role", staff_role),
+                            ) if not value
+                        ]
+                        if missing_staff_fields:
+                            raise ValueError(f"Missing required staff fields: {', '.join(missing_staff_fields)}")
+                        valid_staff_roles = {choice for choice, _ in NonTeachingStaff.ROLE_CHOICES}
+                        if staff_role not in valid_staff_roles:
+                            raise ValueError(f"Invalid staff_role '{staff_role}'. Use one of: {', '.join(sorted(valid_staff_roles))}.")
+                        staff_key = stid.casefold()
+                        if staff_key in seen_staff_ids:
+                            raise ValueError(f"Duplicate staff_id '{stid}' in this file; first used on row {seen_staff_ids[staff_key]}.")
+                        seen_staff_ids[staff_key] = row_number
+                        with transaction.atomic():
+                            staff_member, created = NonTeachingStaff.objects.update_or_create(
+                                school=school,
+                                staff_id=stid,
+                                defaults={
+                                    "name": staff_name,
+                                    "phone": staff_phone,
+                                    "role": staff_role,
+                                }
+                            )
+                            if created:
+                                provision_staff_login(staff_member)
+                        if created:
+                            staff_count += 1
+                        else:
+                            staff_updated_count += 1
+
+                except Exception as e:
+                    errors.append(f"Row {row_number}: {str(e)}")
+            if validate_only or errors:
+                transaction.set_rollback(True)
+
+        response_status = 400 if errors else 200
 
         return Response({
             "message": (
-                f"Bulk upload processed for {active_year.name}"
+                "Validation passed. No records were changed."
+                if validate_only and not errors else
+                "Validation failed. No records were uploaded."
+                if validate_only else
+                f"Bulk upload failed. No records were uploaded for {active_year.name}."
                 if errors else f"Bulk Upload Success for {active_year.name}"
             ),
             "summary": {
@@ -455,9 +495,11 @@ class CSVUploadView(APIView):
                 "profiles_updated": updated_student_count,
                 "enrolled_in_year": enrollment_count,
                 "teachers": teacher_count,
-                "staff": staff_count
+                "staff": staff_count,
+                "staff_updated": staff_updated_count,
             },
-            "errors": errors
+            "errors": errors,
+            "valid": not errors,
         }, status=response_status)
 
 # ==========================================
