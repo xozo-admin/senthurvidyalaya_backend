@@ -71,9 +71,7 @@ def sync_user_profile(sender, instance, created, **kwargs):
             user_account.phone = str(password_val)
             needs_save = True
 
-        if isinstance(instance, Teacher) or (
-            isinstance(instance, Student) and password_changed
-        ):
+        if password_changed and isinstance(instance, (Teacher, Student, NonTeachingStaff)):
             user_account.set_password(str(password_val))
             needs_save = True
 

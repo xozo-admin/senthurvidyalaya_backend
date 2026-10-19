@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework import status, generics
 from rest_framework.authtoken.models import Token
 from django.contrib.auth import authenticate, login
+from django.db.models import Q
 from django.core.cache import cache
 from django.core.exceptions import ObjectDoesNotExist 
 from django.utils import timezone
@@ -121,9 +122,16 @@ class LoginView(APIView):
         # the login screen asks students to enter their email address. Resolve
         # that email to the account username before authenticating.
         if user is None and '@' in username:
-            matched_user = User.objects.filter(email__iexact=username).first()
-            if matched_user:
+            # Staff email is also stored on NonTeachingStaff; include it for
+            # older accounts where User.email was never synchronized. Iterate
+            # candidates so duplicate email addresses don't block a valid login.
+            email_users = User.objects.filter(
+                Q(email__iexact=username) | Q(staff_profile__email__iexact=username)
+            ).distinct()
+            for matched_user in email_users:
                 user = authenticate(username=matched_user.username, password=password)
+                if user:
+                    break
 
         if user is not None:
             # --- CASE A: ADMIN / SUPER ADMIN (Requires 2FA) ---
