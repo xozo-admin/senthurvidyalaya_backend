@@ -47,6 +47,10 @@ def sync_user_profile(sender, instance, created, **kwargs):
         email_val = instance.email
         full_name = instance.name
 
+    # AbstractUser.email is NOT NULL in the database. Profile email fields
+    # may be nullable, so do not propagate None when syncing a profile.
+    email_val = email_val or ''
+
     # Safety Check
     if not username_val:
         return
