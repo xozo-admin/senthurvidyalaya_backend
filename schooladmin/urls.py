@@ -18,6 +18,7 @@ from .views import (
     AdminStaffListCreateView, 
     AdminStaffPaginatedListView,
     AdminStaffDetailView,
+    AdminStaffResetLoginView,
 
     AssignClassTeacherView, # <--- Add this here!
     AdminDashboardView,
@@ -80,6 +81,7 @@ urlpatterns = [
     # --- MANAGE STAFF ---
     path("staff/", AdminStaffListCreateView.as_view(), name="admin-staff-list"),
     path("staff/paginated/", AdminStaffPaginatedListView.as_view(), name="admin-staff-list-paginated"),
+    path("staff/<str:staff_id>/reset-login/", AdminStaffResetLoginView.as_view(), name="admin-staff-reset-login"),
 
     # -----------------------------------------------------------------
 

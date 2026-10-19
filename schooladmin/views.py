@@ -767,6 +767,48 @@ class AdminStaffDetailView(generics.RetrieveUpdateDestroyAPIView):
         return scope_queryset_for_user(NonTeachingStaff.objects.all(), self.request)
 
 
+class AdminStaffResetLoginView(APIView):
+    """Repair a staff account and reset its password to the registered phone."""
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def post(self, request, staff_id):
+        staff_member = get_object_or_404(
+            scope_queryset_for_user(NonTeachingStaff.objects.all(), request),
+            staff_id=staff_id,
+        )
+        phone = str(staff_member.phone or "")
+        if not phone.strip():
+            return Response({"error": "This staff record has no phone number."}, status=400)
+
+        user = staff_member.user
+        if user is None:
+            user = User.objects.filter(username__iexact=staff_member.staff_id).first()
+            if user and user.user_type != "staff":
+                return Response({"error": "This username belongs to a different account type."}, status=409)
+            if user and hasattr(user, "staff_profile"):
+                if user.staff_profile.pk != staff_member.pk:
+                    return Response({"error": "This username is linked to another staff record."}, status=409)
+            if user is None:
+                user = User(username=staff_member.staff_id, user_type="staff")
+
+        user.username = staff_member.staff_id
+        user.user_type = "staff"
+        user.phone = phone
+        user.email = staff_member.email or ""
+        user.is_active = True
+        user.set_password(phone)
+        user.save()
+
+        if staff_member.user_id != user.pk:
+            staff_member.user = user
+            staff_member.save(update_fields=["user"])
+
+        return Response({
+            "message": "Staff login reset. Use the phone number shown in the staff record as the password.",
+            "username": user.username,
+        })
+
+
 # ==========================================
 # 4. SETUP UTILS (Assign Teachers) - REFACTORED
 # ==========================================
