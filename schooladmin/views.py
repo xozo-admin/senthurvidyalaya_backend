@@ -114,6 +114,28 @@ def csv_value(row, *keys):
     return ""
 
 
+def normalize_csv_phone(value):
+    """Remove phone formatting and add India's +91 prefix when absent."""
+    raw = "".join(str(value or "").split())
+    if not raw:
+        return ""
+
+    digits = "".join(character for character in raw if character.isdigit())
+    if not digits:
+        return raw
+    if digits.startswith("0091"):
+        return "+" + digits[2:]
+    if digits.startswith("91") and len(digits) > 10:
+        return "+" + digits
+    if raw.startswith("+"):
+        return "+" + digits
+    if len(digits) == 11 and digits.startswith("0"):
+        digits = digits[1:]
+    if len(digits) == 10:
+        return "+91" + digits
+    return digits
+
+
 def validate_bulk_account_identity(identifier, user_type, profile_relation, existing_profile):
     user = User.objects.filter(username__iexact=identifier).order_by("pk").first()
     if not user:
@@ -353,8 +375,8 @@ class CSVUploadView(APIView):
                             "student_name": csv_value(row, "student_name", "name"),
                             "father_name": csv_value(row, "father_name"),
                             "mother_name": csv_value(row, "mother_name"),
-                            "father_phone": csv_value(row, "father_phone"),
-                            "mother_phone": csv_value(row, "mother_phone"),
+                            "father_phone": normalize_csv_phone(csv_value(row, "father_phone")),
+                            "mother_phone": normalize_csv_phone(csv_value(row, "mother_phone")),
                             "date_of_birth": csv_value(row, "date_of_birth", "dob"),
                             "gender": csv_value(row, "gender"),
                         }
@@ -445,7 +467,7 @@ class CSVUploadView(APIView):
                             tid, "teacher", "teacher_profile", existing_teacher
                         )
                         teacher_name = csv_value(row, "teacher_name", "name")
-                        teacher_phone = csv_value(row, "teacher_phone", "phone")
+                        teacher_phone = normalize_csv_phone(csv_value(row, "teacher_phone", "phone"))
                         teacher_email = csv_value(row, "teacher_email", "email")
                         teacher_dob = csv_value(row, "teacher_dob", "date_of_birth", "dob")
                         if not teacher_name or not teacher_phone or not teacher_email or not teacher_dob:
@@ -483,7 +505,7 @@ class CSVUploadView(APIView):
                     if csv_value(row, "staff_id"):
                         stid = csv_value(row, "staff_id")
                         staff_name = csv_value(row, "staff_name")
-                        staff_phone = "".join(csv_value(row, "staff_phone").split())
+                        staff_phone = normalize_csv_phone(csv_value(row, "staff_phone"))
                         staff_role = csv_value(row, "staff_role").strip().lower().replace(" ", "_").replace("-", "_")
                         missing_staff_fields = [
                             label for label, value in (
