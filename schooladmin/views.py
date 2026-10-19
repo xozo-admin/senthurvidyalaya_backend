@@ -10,6 +10,7 @@ from announcements.models import Announcement, CommonAnnouncement, StaffAnnounce
 from inventory.models import InventoryItem, StockLog
 from rest_framework.views import APIView
 from rest_framework import generics
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.pagination import PageNumberPagination
@@ -731,7 +732,15 @@ class AdminStaffListCreateView(generics.ListCreateAPIView):
         return scope_queryset_for_user(NonTeachingStaff.objects.all(), self.request).order_by("staff_id")
 
     def perform_create(self, serializer):
-        serializer.save(school=get_requested_school(self.request))
+        # Creating a staff profile must create/link its login in the same
+        # transaction. Otherwise the profile is visible in the admin list but
+        # the staff member cannot sign in until an admin runs reset-login.
+        with transaction.atomic():
+            staff_member = serializer.save(school=get_requested_school(self.request))
+            try:
+                provision_staff_login(staff_member)
+            except ValueError as exc:
+                raise ValidationError({"detail": str(exc)}) from exc
 
 
 class AdminStaffPagination(PageNumberPagination):
