@@ -113,6 +113,18 @@ def csv_value(row, *keys):
             return value
     return ""
 
+
+def validate_bulk_account_identity(identifier, user_type, profile_relation, existing_profile):
+    user = User.objects.filter(username__iexact=identifier).order_by("pk").first()
+    if not user:
+        return
+    if user.user_type != user_type:
+        raise ValueError(f"ID '{identifier}' is already used by a {user.user_type} account.")
+    if hasattr(user, profile_relation):
+        linked_profile = getattr(user, profile_relation)
+        if existing_profile is None or linked_profile.pk != existing_profile.pk:
+            raise ValueError(f"ID '{identifier}' is already linked to another {user_type} record.")
+
 def normalize_accommodation(value):
     raw_text = str(value or "").strip().lower()
     raw = raw_text.replace("-", "_").replace(" ", "_")
@@ -301,6 +313,8 @@ class CSVUploadView(APIView):
         staff_updated_count = 0
         updated_student_count = 0
         errors = []
+        seen_student_ids = {}
+        seen_teacher_ids = {}
         seen_staff_ids = {}
 
         with transaction.atomic():
@@ -312,10 +326,28 @@ class CSVUploadView(APIView):
                         and any(csv_value(row, key) for key in ("staff_name", "staff_phone", "staff_role"))
                     ):
                         raise ValueError("Missing required staff_id.")
+                    if (
+                        not csv_value(row, "student_id")
+                        and any(csv_value(row, key) for key in (
+                            "student_name", "father_name", "mother_name", "father_phone", "mother_phone",
+                            "student_email", "date_of_birth", "gender",
+                        ))
+                    ):
+                        raise ValueError("Missing required student_id.")
+                    if (
+                        not csv_value(row, "teacher_id")
+                        and any(csv_value(row, key) for key in (
+                            "teacher_name", "teacher_phone", "teacher_email", "teacher_dob",
+                        ))
+                    ):
+                        raise ValueError("Missing required teacher_id.")
                     # --- 1. STUDENTS ---
                     if csv_value(row, "student_id"):
                         sid = csv_value(row, "student_id")
                         existing_student = Student.objects.filter(school=school, student_id=sid).first()
+                        validate_bulk_account_identity(
+                            sid, "student", "student_profile", existing_student
+                        )
 
                         required_fields = {
                             "student_name": csv_value(row, "student_name", "name"),
@@ -333,6 +365,10 @@ class CSVUploadView(APIView):
                         gender = required_fields["gender"].title()
                         if gender.lower() not in {"male", "female", "other"}:
                             raise ValueError("Gender must be Male, Female, or Other.")
+                        student_key = sid.casefold()
+                        if student_key in seen_student_ids:
+                            raise ValueError(f"Duplicate student_id '{sid}' in this file; first used on row {seen_student_ids[student_key]}.")
+                        seen_student_ids[student_key] = row_number
 
                         # A. Create Student Profile (Static)
                         student_obj, created = Student.objects.update_or_create(
@@ -404,6 +440,10 @@ class CSVUploadView(APIView):
                     # --- 2. TEACHERS ---
                     if csv_value(row, "teacher_id"):
                         tid = csv_value(row, "teacher_id")
+                        existing_teacher = Teacher.objects.filter(school=school, teacher_id=tid).first()
+                        validate_bulk_account_identity(
+                            tid, "teacher", "teacher_profile", existing_teacher
+                        )
                         teacher_name = csv_value(row, "teacher_name", "name")
                         teacher_phone = csv_value(row, "teacher_phone", "phone")
                         teacher_email = csv_value(row, "teacher_email", "email")
@@ -418,6 +458,10 @@ class CSVUploadView(APIView):
                                 ) if not value
                             ]
                             raise ValueError(f"Missing required teacher fields: {', '.join(missing)}")
+                        teacher_key = tid.casefold()
+                        if teacher_key in seen_teacher_ids:
+                            raise ValueError(f"Duplicate teacher_id '{tid}' in this file; first used on row {seen_teacher_ids[teacher_key]}.")
+                        seen_teacher_ids[teacher_key] = row_number
 
                         Teacher.objects.update_or_create(
                             school=school,
@@ -457,6 +501,10 @@ class CSVUploadView(APIView):
                         if staff_key in seen_staff_ids:
                             raise ValueError(f"Duplicate staff_id '{stid}' in this file; first used on row {seen_staff_ids[staff_key]}.")
                         seen_staff_ids[staff_key] = row_number
+                        existing_staff = NonTeachingStaff.objects.filter(school=school, staff_id=stid).first()
+                        validate_bulk_account_identity(
+                            stid, "staff", "staff_profile", existing_staff
+                        )
                         with transaction.atomic():
                             staff_member, created = NonTeachingStaff.objects.update_or_create(
                                 school=school,
