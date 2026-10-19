@@ -424,15 +424,18 @@ class CSVUploadView(APIView):
                 # --- 3. STAFF ---
                 if csv_value(row, "staff_id"):
                     stid = csv_value(row, "staff_id")
-                    _, created = NonTeachingStaff.objects.update_or_create(
-                        school=school,
-                        staff_id=stid,
-                        defaults={
-                            "name": csv_value(row, "staff_name"),
-                            "phone": csv_value(row, "staff_phone"),
-                            "role": csv_value(row, "staff_role"),
-                        }
-                    )
+                    with transaction.atomic():
+                        staff_member, created = NonTeachingStaff.objects.update_or_create(
+                            school=school,
+                            staff_id=stid,
+                            defaults={
+                                "name": csv_value(row, "staff_name"),
+                                "phone": csv_value(row, "staff_phone"),
+                                "role": csv_value(row, "staff_role"),
+                            }
+                        )
+                        if created:
+                            provision_staff_login(staff_member)
                     if created: staff_count += 1
 
             except Exception as e:
