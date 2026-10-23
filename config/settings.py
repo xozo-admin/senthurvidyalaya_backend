@@ -317,6 +317,8 @@ CSRF_TRUSTED_ORIGINS = env_list(
         'http://localhost:3000',
         'http://127.0.0.1:3000',
         'http://192.168.33.71:3000',
+        "http://127.0.0.1:3456",
+        "http://localhost:3456",
         'https://posttympanic-semipurposively-sanora.ngrok-free.dev',
         'https://lanelle-overintense-chandler.ngrok-free.dev',
     ],
