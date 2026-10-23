@@ -101,7 +101,8 @@ DEBUG = env_bool('DEBUG', True)
 
 ALLOWED_HOSTS = env_list(
     'ALLOWED_HOSTS',
-    ['*', 'http://192.168.33.71:8000', '192.168.33.71', 'http://192.168.33.71:3000'],
+    ['*', 'http://192.168.33.71:8000', '192.168.33.71', 'http://192.168.33.71:3000',"http://127.0.0.1:3456",
+ "http://localhost:3456",],
 )
 
 
@@ -302,6 +303,8 @@ CORS_ALLOWED_ORIGINS = env_list(
         'http://localhost:3000',
         'http://192.168.33.71:3000',
         'http://127.0.0.1:3000',
+        "http://127.0.0.1:3456",
+        "http://localhost:3456",
         'https://posttympanic-semipurposively-sanora.ngrok-free.dev',
         'https://lanelle-overintense-chandler.ngrok-free.dev',
     ],
