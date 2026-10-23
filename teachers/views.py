@@ -183,6 +183,86 @@ class AssignTeacherSubjectView(APIView):
             "year": active_year.name,
             "details": results
         }, status=status.HTTP_200_OK)
+
+
+class AllocationManagerView(APIView):
+    """Admin read/update API for the allocation screen's real records."""
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def _active_year(self, request):
+        year = get_active_academic_year(request)
+        if not year:
+            return None, Response({"error": "No active academic year is configured."}, status=400)
+        return year, None
+
+    def get(self, request):
+        year, error = self._active_year(request)
+        if error:
+            return error
+        kind = request.query_params.get('kind', 'subject')
+        if kind == 'subject':
+            records = scope_queryset_for_user(TeacherAllocation.objects.filter(academic_year=year), request).select_related('teacher', 'subject', 'standard')
+            data = [{
+                'id': record.id, 'teacher': record.teacher.id, 'teacher_id': record.teacher.teacher_id,
+                'teacher_name': record.teacher.name, 'subject': record.subject.name,
+                'subject_code': getattr(record.subject, 'subject_code', ''), 'class': record.standard.name,
+                'sections': list(TimetableSlot.objects.filter(
+                    academic_year=year, teacher=record.teacher, subject=record.subject,
+                    section__standard=record.standard,
+                ).values_list('section__name', flat=True).distinct()),
+                'academic_year': year.name,
+            } for record in records]
+        elif kind == 'class_teacher':
+            records = scope_queryset_for_user(ClassTeacher.objects.filter(academic_year=year), request).select_related('teacher', 'section__standard')
+            data = [{
+                'id': record.id, 'teacher_id': record.teacher.teacher_id, 'teacher_name': record.teacher.name,
+                'class_name': record.section.standard.name, 'section_name': record.section.name,
+                'section_id': record.section_id, 'academic_year': year.name, 'is_active': True,
+            } for record in records]
+        else:
+            return Response({'error': "kind must be 'subject' or 'class_teacher'."}, status=400)
+        return Response({'status': 200, 'data': data})
+
+    @transaction.atomic
+    def put(self, request):
+        year, error = self._active_year(request)
+        if error:
+            return error
+        kind = request.data.get('kind')
+        record_id = request.data.get('id')
+        teacher_id = request.data.get('teacher_id')
+        if not kind or not record_id or not teacher_id:
+            return Response({'error': 'kind, id, and teacher_id are required.'}, status=400)
+        teacher = get_object_or_404(scope_queryset_for_user(Teacher.objects.all(), request), teacher_id=teacher_id)
+        if kind == 'subject':
+            record = get_object_or_404(scope_queryset_for_user(TeacherAllocation.objects.filter(academic_year=year), request), id=record_id)
+            class_name, subject_name = request.data.get('class_name'), request.data.get('subject_name')
+            if not class_name or not subject_name:
+                return Response({'error': 'class_name and subject_name are required.'}, status=400)
+            standard = get_object_or_404(scope_queryset_for_user(Standard.objects.all(), request), name=class_name)
+            subject = get_object_or_404(Subject.objects.all(), name__iexact=subject_name, standard=standard)
+            duplicate = TeacherAllocation.objects.filter(academic_year=year, teacher=teacher, subject=subject, standard=standard).exclude(id=record.id).exists()
+            if duplicate:
+                return Response({'error': 'That subject allocation already exists for this teacher and class.'}, status=400)
+            record.teacher, record.standard, record.subject, record.school = teacher, standard, subject, standard.school
+            record.save(update_fields=['teacher', 'standard', 'subject', 'school'])
+            return Response({'status': 200, 'message': 'Subject allocation updated successfully.'})
+        if kind == 'class_teacher':
+            record = get_object_or_404(scope_queryset_for_user(ClassTeacher.objects.filter(academic_year=year), request), id=record_id)
+            class_name, section_name = request.data.get('class_name'), request.data.get('section_name')
+            if not class_name or not section_name:
+                return Response({'error': 'class_name and section_name are required.'}, status=400)
+            section = get_object_or_404(Section.objects.filter(school=record.school, standard__name=class_name, name=section_name))
+            occupied = ClassTeacher.objects.filter(academic_year=year, section=section).exclude(id=record.id).exists()
+            teacher_busy = ClassTeacher.objects.filter(academic_year=year, teacher=teacher).exclude(id=record.id).exists()
+            if occupied:
+                return Response({'error': 'This section already has a class teacher.'}, status=400)
+            if teacher_busy:
+                return Response({'error': 'This teacher is already assigned to another section.'}, status=400)
+            record.teacher, record.section, record.school = teacher, section, section.school
+            record.save(update_fields=['teacher', 'section', 'school'])
+            return Response({'status': 200, 'message': 'Class teacher allocation updated successfully.'})
+        return Response({'error': "kind must be 'subject' or 'class_teacher'."}, status=400)
         
 # ==========================================
 # 3. CLASS MANAGEMENT (REFACTORED for Safety)
