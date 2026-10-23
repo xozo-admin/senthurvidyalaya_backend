@@ -18,6 +18,7 @@ from .views import (
     AllTeachersAllocationsView,
     TeacherClassSubjectsView,
     TeacherSubjectAllocationsView
+    ,AllocationManagerView
 
 )
 
@@ -51,4 +52,6 @@ urlpatterns = [
     path('teachers-by-class/', TeachersByClassView.as_view(), name='teachers-by-class'),
     path('all-allocations/', AllTeachersAllocationsView.as_view(), name='all-teachers-allocations'),
     path('my-class-subjects/', TeacherClassSubjectsView.as_view(), name='teacher-class-subjects'),
-    path('subject-allocations/', TeacherSubjectAllocationsView.as_view(), name='teacher-subject-allocations'),]
+    path('subject-allocations/', TeacherSubjectAllocationsView.as_view(), name='teacher-subject-allocations'),
+    path('allocations/manage/', AllocationManagerView.as_view(), name='allocation-manager'),
+]
